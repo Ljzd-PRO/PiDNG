@@ -1,4 +1,5 @@
 import struct
+from typing import BinaryIO
 
 class Type:
     # TIFF Type Format = (Tag TYPE value, Size in bytes of one instance)
@@ -307,11 +308,26 @@ class DNG(object):
             
         return (totalLength + 3) & 0xFFFFFFFC
 
-    def write(self):
+    def write(self, file : BinaryIO = None):
         struct.pack_into("<ccbbI", self.buf, 0, b'I', b'I', 0x2A, 0x00, 8) # assume the first IFD happens immediately after header
 
         for ifd in self.IFDs:
             ifd.write()
+
+        if file:
+            # This is the optimised output route. It's still convenient to use
+            # self.buf for the headers and tags which we write out now.
+            file.write(self.buf[:self.StripOffsets[0]])
+
+            # But after that the strips can be written out directly (not forgetting
+            # any padding bytes).
+            for i in range(len(self.ImageDataStrips)):
+                strip = self.ImageDataStrips[i]
+                file.write(strip)
+                padding =  (len(strip) + 3) & 0xFFFFFFFC
+                file.write(b'' * padding)
+
+            return
 
         for i in range(len(self.ImageDataStrips)):
             self.buf[self.StripOffsets[i]:self.StripOffsets[i]+len(self.ImageDataStrips[i])] = self.ImageDataStrips[i]

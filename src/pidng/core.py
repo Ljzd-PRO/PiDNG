@@ -2,6 +2,7 @@ import warnings
 import os
 import numpy as np
 import types
+from typing import BinaryIO
 from .dng import Tag, dngIFD, dngTag, DNG, DNGTags
 from .defs import Compression, DNGVersion, SampleFormat
 from .packing import *
@@ -45,7 +46,8 @@ class DNGBASE:
         return processed
 
 
-    def __process__(self, rawFrame : np.ndarray, tags: DNGTags, compress : bool) -> bytearray:
+    def __process__(self, rawFrame : np.ndarray, tags: DNGTags, compress : bool,
+                    file : BinaryIO = None) -> bytearray:
 
         width = tags.get(Tag.ImageWidth).rawValue[0]
         length = tags.get(Tag.ImageLength).rawValue[0]
@@ -69,17 +71,20 @@ class DNGBASE:
                               int(length/2), bpp, 0, 0, 0, "", 6)
         else:
             if bpp == 8:
-                tile = rawFrame.astype('uint8').tobytes()
+                packedFrame = rawFrame.astype('uint8')
             elif bpp == 10:
-                tile = pack10(rawFrame).tobytes()
+                packedFrame = pack10(rawFrame)
             elif bpp == 12:
-                tile = pack12(rawFrame).tobytes()
+                packedFrame = pack12(rawFrame)
             elif bpp == 14:
-                tile = pack14(rawFrame).tobytes()
+                packedFrame = pack14(rawFrame)
             else:
                 # 16-bit integers or 32-bit floats
-                tile = rawFrame.tobytes()
-        
+                packedFrame = rawFrame
+            # These buffers are all contiguous, so the optimised output route
+            # can use the underlying memoryview, no need to convert to bytes.
+            tile = packedFrame.data if file else packedFrame.tobytes()
+
         dngTemplate = DNG()
 
         dngTemplate.ImageDataStrips.append(tile)
@@ -112,7 +117,9 @@ class DNGBASE:
 
         buf = bytearray(totalLength)
         dngTemplate.setBuffer(buf)
-        dngTemplate.write()
+        # The file parameter will cause the optimised output route to be used,
+        # where appropriate.
+        dngTemplate.write(file=file)
 
         return buf
 
@@ -122,7 +129,11 @@ class DNGBASE:
         self.compress = compress
         self.path = path
 
-    def convert(self, image : np.ndarray, filename=""):
+    def convert(self, image : np.ndarray, filename="", file : BinaryIO = None):
+        # The file parameter can be passed an open file handle, or a BytesIO,
+        # and this function will take an optimised route to writing the output.
+        # Note that the pixel data is not copied to self.buf (which is why it's
+        # faster) in this case.
 
         if self.tags is None:
             raise Exception("Options have not been set!")
@@ -131,7 +142,12 @@ class DNGBASE:
         self.__data_condition__(image)
         unpacked = self.__unpack_pixels__(image)
         filtered = self.__filter__(unpacked, self.filter)
-        buf = self.__process__(filtered, self.tags, self.compress)
+        buf = self.__process__(filtered, self.tags, self.compress, file=file)
+
+        if file:
+            # For the optimised output route, __process__ has already written
+            # the output for us, so we are finished.
+            return
 
         file_output = False
         if len(filename) > 0:
