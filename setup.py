@@ -4,7 +4,7 @@ from setuptools import setup, Extension, find_packages
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
-ljpeg92 = Extension('ljpegCompress', sources=[
+ljpeg92 = Extension('pidng.ljpegCompress', sources=[
                     "src/pidng/bitunpack.c", "src/pidng/liblj92/lj92.c"],  extra_compile_args=['-std=gnu99'], extra_link_args=[])
 
 setup(

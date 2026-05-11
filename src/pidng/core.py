@@ -66,7 +66,7 @@ class DNGBASE:
                 raise Exception('Compression is not supported for floating-point data')
 
         if compress:
-            from ljpegCompress import pack16tolj
+            from pidng.ljpegCompress import pack16tolj
             tile = pack16tolj(rawFrame, int(width*2),
                               int(length/2), bpp, 0, 0, 0, "", 6)
         else:
