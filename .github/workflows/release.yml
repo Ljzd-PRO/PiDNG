@@ -1,0 +1,132 @@
+name: Release wheels
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag, for example v4.0.9
+        required: true
+        type: string
+      name:
+        description: Release name. Defaults to the tag when omitted.
+        required: false
+        type: string
+      prerelease:
+        description: Mark the GitHub Release as a prerelease
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  build-wheels:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64
+            os: ubuntu-24.04
+            archs: x86_64
+          - name: Linux aarch64
+            os: ubuntu-24.04-arm
+            archs: aarch64
+          - name: macOS x86_64
+            os: macos-15-intel
+            archs: x86_64
+          - name: macOS arm64
+            os: macos-15
+            archs: arm64
+          - name: Windows AMD64
+            os: windows-2025
+            archs: AMD64
+          - name: Windows x86
+            os: windows-2025
+            archs: x86
+
+    env:
+      CIBW_BUILD: cp39-* cp310-* cp311-* cp312-* cp313-* cp314-*
+      CIBW_ARCHS: ${{ matrix.archs }}
+      CIBW_TEST_COMMAND: python -c "import pidng; import pidng.ljpegCompress"
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v4.1.0
+        with:
+          output-dir: wheelhouse
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v7
+        with:
+          name: wheels-${{ runner.os }}-${{ matrix.archs }}
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: build-wheels
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download wheels
+        uses: actions/download-artifact@v8
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+
+      - name: Verify wheel filenames
+        run: |
+          python - <<'PY'
+          import glob
+          import os
+          import re
+          import sys
+
+          wheel_re = re.compile(
+              r"^[A-Za-z0-9_.]+-[A-Za-z0-9_.!+]+(?:-[A-Za-z0-9_.!+]+)?-"
+              r"[A-Za-z0-9_.]+-[A-Za-z0-9_.]+-[A-Za-z0-9_.]+\.whl$"
+          )
+          wheels = sorted(glob.glob("dist/*.whl"))
+          if not wheels:
+              sys.exit("No wheels were downloaded")
+
+          invalid = [os.path.basename(path) for path in wheels if not wheel_re.match(os.path.basename(path))]
+          if invalid:
+              sys.exit("Invalid wheel filename(s): " + ", ".join(invalid))
+
+          print("Validated wheel files:")
+          for wheel in wheels:
+              print(os.path.basename(wheel))
+          PY
+
+      - name: Create or update GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_NAME: ${{ inputs.name || inputs.tag }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+
+          args=("$RELEASE_TAG" dist/*.whl --target "$GITHUB_SHA" --title "$RELEASE_NAME" --notes "Built wheels for $RELEASE_TAG")
+          if [[ "$PRERELEASE" == "true" ]]; then
+            args+=(--prerelease)
+          fi
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/*.whl --clobber
+          else
+            gh release create "${args[@]}"
+          fi

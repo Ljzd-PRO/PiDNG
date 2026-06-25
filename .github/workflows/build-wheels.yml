@@ -2,42 +2,62 @@ name: Build wheels
 
 on:
   workflow_dispatch:
+  push:
+    branches: [master]
+  pull_request:
 
 permissions:
   contents: read
 
+concurrency:
+  group: build-wheels-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-wheels:
-    name: ${{ matrix.os }} / py${{ matrix.python-version }}
+    name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+        include:
+          - name: Linux x86_64
+            os: ubuntu-24.04
+            archs: x86_64
+          - name: Linux aarch64
+            os: ubuntu-24.04-arm
+            archs: aarch64
+          - name: macOS x86_64
+            os: macos-15-intel
+            archs: x86_64
+          - name: macOS arm64
+            os: macos-15
+            archs: arm64
+          - name: Windows AMD64
+            os: windows-2025
+            archs: AMD64
+          - name: Windows x86
+            os: windows-2025
+            archs: x86
 
     env:
-      CIBW_BUILD: ${{ fromJSON('{"3.8":"cp38-*","3.9":"cp39-*","3.10":"cp310-*","3.11":"cp311-*","3.12":"cp312-*","3.13":"cp313-*","3.14":"cp314-*"}')[matrix.python-version] }}
-      CIBW_ARCHS: ${{ fromJSON('{"ubuntu-latest":"x86_64 aarch64","macos-latest":"x86_64 arm64","windows-latest":"AMD64 x86"}')[matrix.os] }}
-      CIBW_PRERELEASE_PYTHONS: "1"
+      CIBW_BUILD: cp39-* cp310-* cp311-* cp312-* cp313-* cp314-*
+      CIBW_ARCHS: ${{ matrix.archs }}
+      CIBW_TEST_COMMAND: python -c "import pidng; import pidng.ljpegCompress"
 
     steps:
       - name: Check out
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install cibuildwheel
-        run: python -m pip install --upgrade pip cibuildwheel
+        uses: actions/checkout@v7
 
       - name: Build wheels
-        run: python -m cibuildwheel --output-dir wheelhouse
+        uses: pypa/cibuildwheel@v4.1.0
+        with:
+          output-dir: wheelhouse
 
       - name: Upload wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: wheels-${{ matrix.os }}-py${{ matrix.python-version }}
+          name: wheels-${{ runner.os }}-${{ matrix.archs }}
           path: wheelhouse/*.whl
+          if-no-files-found: error
